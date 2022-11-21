@@ -28,7 +28,7 @@ template <
     const int BLOCK_SIZE_K,  // width of block of A that each thread block load into shared memory
     const int BLOCK_SIZE_N,  // width of block of C that each thread block calculate
     const int THREAD_SIZE_Y, // height of block of C that each thread calculate
-    const int THREAD_SIZE_X,  // width of block of C that each thread calculate
+    const int THREAD_SIZE_M,  // width of block of C that each thread calculate
     const bool ENABLE_DOUBLE_BUFFER // whether enable double buffering or not
     > 
 __global__ void Sgemm( 
@@ -47,7 +47,7 @@ __global__ void Sgemm(
     int ty = threadIdx.y;
     
     // the threads number in Block of X,Y
-    const int THREAD_X_PER_BLOCK = BLOCK_SIZE_N / THREAD_SIZE_X;
+    const int THREAD_X_PER_BLOCK = BLOCK_SIZE_N / THREAD_SIZE_M;
     const int THREAD_Y_PER_BLOCK = BLOCK_SIZE_M / THREAD_SIZE_Y;
     const int THREAD_NUM_PER_BLOCK = THREAD_X_PER_BLOCK * THREAD_Y_PER_BLOCK;
 
@@ -58,10 +58,10 @@ __global__ void Sgemm(
     __shared__ float As[2][BLOCK_SIZE_K][BLOCK_SIZE_M];
     __shared__ float Bs[2][BLOCK_SIZE_K][BLOCK_SIZE_N];
     // registers for C
-    float accum[THREAD_SIZE_Y][THREAD_SIZE_X] = {0};
+    float accum[THREAD_SIZE_Y][THREAD_SIZE_M] = {0};
     // registers for A and B
     float frag_a[2][THREAD_SIZE_Y];
-    float frag_b[2][THREAD_SIZE_X];
+    float frag_b[2][THREAD_SIZE_M];
     // registers load global memory
     const int ldg_num_a = BLOCK_SIZE_M * BLOCK_SIZE_K / (THREAD_NUM_PER_BLOCK * 4);
     const int ldg_num_b = BLOCK_SIZE_K * BLOCK_SIZE_N / (THREAD_NUM_PER_BLOCK * 4);
@@ -116,8 +116,8 @@ __global__ void Sgemm(
     }
     // load B from shared memory to register
     #pragma unroll
-    for (int thread_x = 0; thread_x < THREAD_SIZE_X; thread_x += 4) {
-        FETCH_FLOAT4(frag_b[0][thread_x]) = FETCH_FLOAT4(Bs[0][0][THREAD_SIZE_X * tx + thread_x]);
+    for (int thread_x = 0; thread_x < THREAD_SIZE_M; thread_x += 4) {
+        FETCH_FLOAT4(frag_b[0][thread_x]) = FETCH_FLOAT4(Bs[0][0][THREAD_SIZE_M * tx + thread_x]);
     }
 
     int write_stage_idx = 1;
@@ -156,14 +156,14 @@ __global__ void Sgemm(
             }
             // load B from shared memory to register
             #pragma unroll
-            for (int thread_x = 0; thread_x < THREAD_SIZE_X; thread_x += 4) {
-                FETCH_FLOAT4(frag_b[(j+1)%2][thread_x]) = FETCH_FLOAT4(Bs[load_stage_idx][j+1][THREAD_SIZE_X * tx + thread_x]);
+            for (int thread_x = 0; thread_x < THREAD_SIZE_M; thread_x += 4) {
+                FETCH_FLOAT4(frag_b[(j+1)%2][thread_x]) = FETCH_FLOAT4(Bs[load_stage_idx][j+1][THREAD_SIZE_M * tx + thread_x]);
             }
-            // compute C THREAD_SIZE_X x THREAD_SIZE_Y
+            // compute C THREAD_SIZE_M x THREAD_SIZE_Y
             #pragma unroll
             for (int thread_y = 0; thread_y < THREAD_SIZE_Y; ++thread_y) {
                 #pragma unroll
-                for (int thread_x = 0; thread_x < THREAD_SIZE_X; ++thread_x) {
+                for (int thread_x = 0; thread_x < THREAD_SIZE_M; ++thread_x) {
                     accum[thread_y][thread_x] += frag_a[j%2][thread_y] * frag_b[j%2][thread_x];
                 }
             }
@@ -285,7 +285,7 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaMemcpy( d_C, h_C, bytes_C, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaEventRecord(start));
     for (int run = 0 ; run < nIter; run ++ ) {
-        dim3 dimBlock(BLOCK_SIZE_N / THREAD_SIZE_X, BLOCK_SIZE_M / THREAD_SIZE_Y);
+        dim3 dimBlock(BLOCK_SIZE_N / THREAD_SIZE_N, BLOCK_SIZE_M / THREAD_SIZE_Y);
         dim3 dimGrid(N / BLOCK_SIZE_N, M / BLOCK_SIZE_M);
         Sgemm<BLOCK_SIZE_M, BLOCK_SIZE_K, BLOCK_SIZE_N, THREAD_SIZE_Y, THREAD_SIZE_X, ENABLE_DOUBLE_BUFFER> 
         <<< dimGrid, dimBlock >>>(d_A, d_B, d_C, M, N, K);
